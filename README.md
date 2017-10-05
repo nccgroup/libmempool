@@ -139,7 +139,7 @@ or only up to a specific number:
 [...]
 ```
 
-Now if we wanat to dumpt he whole mempool portion of the mstate structure (so
+Now if we want to dump the whole mempool portion of the mstate structure (so
 all of the bins and related stats) we can use the `mpmstate` command:
 
 ```

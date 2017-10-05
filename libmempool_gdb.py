@@ -4,78 +4,35 @@
 # Copyright (c) 2017, Aaron Adams <aaron.adams(at)nccgroup(dot)trust>
 # Copyright (c) 2017, Cedric Halbronn <cedric.halbronn(at)nccgroup(dot)trust>
 
-################################################################################
-# GDB COMMANDS
-################################################################################
-
-import gdb
+import gdb, struct
 import os
 from os.path import basename
 from functools import wraps
 
 import traceback
 import sys
-sys.path.insert(0, os.path.join(os.getcwd(), "libmempool"))
+#sys.path.insert(0, os.path.join(os.getcwd(), "libmempool"))
 import importlib
 import libmempool as lmp
 importlib.reload(lmp)
+import helper_gdb as hgdb
+importlib.reload(hgdb)
+import helper as h
+importlib.reload(h)
 
-################################################################################
-# HELPERS
-################################################################################
-
-# Taken from gef. Let's us see proper backtraces from python exceptions
-def show_last_exception():
-    PYTHON_MAJOR = sys.version_info[0]
-    horizontal_line = "-"
-    right_arrow = "->"
-    down_arrow = "\\->"
-
-    print("")
-    exc_type, exc_value, exc_traceback = sys.exc_info()
-    print(" Exception raised ".center(80, horizontal_line))
-    print("{}: {}".format(exc_type.__name__, exc_value))
-    print(" Detailed stacktrace ".center(80, horizontal_line))
-    for fs in traceback.extract_tb(exc_traceback)[::-1]:
-        if PYTHON_MAJOR==2:
-            filename, lineno, method, code = fs
-        else:
-            try:
-                filename, lineno, method, code = fs.filename, fs.lineno, fs.name, fs.line
-            except:
-                filename, lineno, method, code = fs
-
-        print("""{} File "{}", line {:d}, in {}()""".format(down_arrow, filename,
-                                                            lineno, method))
-        print("   {}    {}".format(right_arrow, code))
-
-def get_inferior():
-    try:
-        if len(gdb.inferiors()) == 0:
-            print("[libmempool] No gdb inferior could be found.")
-            return -1
-        else:
-            inferior = gdb.inferiors()[0]
-            return inferior
-    except AttributeError:
-        print("[libmempool] This gdb's python support is too old.")
-        exit()
-
-def has_inferior(f):
-    "decorator to make sure we have an inferior to operate on"
-
-    @wraps(f)
-    def with_inferior(*args, **kwargs):
-        inferior = get_inferior()
-        if inferior != -1 and inferior != None:
-            if (inferior.pid != 0) and (inferior.pid is not None):
-                return f(*args, **kwargs)
+class logger:
+    def logmsg(self, s, end=None):
+        if type(s) == str:
+            if end != None:
+                print("[libmempool_gdb] " + s, end=end)
             else:
-                print("[libmempool] No debugee could be found.  Attach or start a program.")
-                exit()
+                print("[libmempool_gdb] " + s)
         else:
-            exit()
-    return with_inferior
+            print(s)
+
+################################################################################
+# GDB COMMANDS
+################################################################################
 
 # This is a super class with few convenience methods to let all the cmds parse
 # gdb variables easily
@@ -90,9 +47,9 @@ class mpcmd(gdb.Command):
     def logmsg(self, s, end=None):
         if type(s) == str:
             if end != None:
-                print("[libmempool] " + s, end=end)
+                print("[libmempool_gdb] " + s, end=end)
             else:
-                print("[libmempool] " + s)
+                print("[libmempool_gdb] " + s)
         else:
             print(s)
 
@@ -217,7 +174,7 @@ class mpbin(mpcmd):
         self.logmsg("usage: mpbin <addr>")
         self.logmsg(" <addr> an mp chunk header")
 
-    @has_inferior
+    @hgdb.has_inferior
     def invoke(self, arg, from_tty):
         try:
             if arg == '':
@@ -299,7 +256,7 @@ class mpbin(mpcmd):
                 string.append(" [UNSORTED]")
             self.logmsg(''.join(string))
         except Exception as e:
-            show_last_exception()
+            h.show_last_exception()
 
 ################################################################################
 class mpheader(mpcmd):
@@ -315,7 +272,7 @@ class mpheader(mpcmd):
         self.logmsg(' <addr> an inuse mp chunk header. must point at mh struct itself')
         self.logmsg(' -x     hexdump the chunk contents')
 
-    @has_inferior
+    @hgdb.has_inferior
     def invoke(self, arg, from_tty):
 
         try:
@@ -345,7 +302,105 @@ class mpheader(mpcmd):
             if hexdump:
                 self.print_hexdump(p)
         except Exception as e:
-            show_last_exception()
+            h.show_last_exception()
+
+################################################################################
+# XXX - can't really put that in libmempool.py as it relies on gdb
+# but we still want it to be available in the callback to add it to ptchunk/dlchunk
+def find_chunk_with_mh_magic(p, backwards=False, maxbytes=None):
+    log = logger()
+    inferior = hgdb.get_inferior()
+    if backwards:
+        increment = -4
+        log.logmsg("Searching backwards")
+    else:
+        increment = 4
+        log.logmsg("Searching forwards")
+    log.logmsg("Scanning for mempool header magic from 0x%x" % p)
+    addr = p
+    while True:
+        mem = inferior.read_memory(addr, 4)
+        dw = struct.unpack_from("<I", mem, 0x0)[0]
+        #log.logmsg("0x%x -> 0x%x" % (addr, dw))
+        if dw == 0xa11c0123:
+            log.logmsg("Found mempool header magic at 0x%x" % (addr & 0xffffff))
+            # we were at mh start, we want to go at ptmalloc/dlmalloc chunk start
+            if hgdb.retrieve_sizesz() == 4:
+                addr -= 0x8
+            else:
+                addr -= 0x10 
+            break
+        # XXX - test this
+        #if dw == 0x5ee33210:
+        #    log.logmsg("Found mempool temp free header magic at 0x%x" % (addr & 0xffffff))
+        #    # we were at mh start, we want to go at ptmalloc/dlmalloc chunk start
+        #    if hgdb.retrieve_sizesz() == 4:
+        #        addr -= 0x8
+        #    else:
+        #        addr -= 0x10 
+        #    break
+        addr += increment
+        if maxbytes and abs(addr - p) > maxbytes:
+            log.logmsg("Reached %d bytes limit. Stopping" % maxbytes)
+            return None
+    return addr
+
+class mpfindchunk(mpcmd):
+
+    def __init__(self, mh_version=None):
+        super(mpfindchunk, self).__init__("mpfindchunk", mh_version=mh_version)
+
+    def help(self):
+        self.logmsg('usage: mpfindchunk [<addr> [-r] [-b]')
+        self.logmsg(' <addr> address to start from')
+        self.logmsg(' -b      go backwards (default: forwards)')
+        self.logmsg(' -m      max bytes to search for (otherwise search indefinitely)')
+        return
+    
+    def invoke(self, arg, from_tty):
+        try:
+            if arg == '':
+                self.help()
+                return
+
+            m_found = False
+            backwards = False
+            maxbytes = None
+            for item in arg.split():
+                if m_found:
+                    if item.find("0x") != -1:
+                        maxbytes = int(item, 16)
+                    else:
+                        maxbytes = int(item)
+                    m_found = False
+                elif item.find("-m") != -1:
+                    m_found = True
+                elif item.find("-b") != -1:
+                    backwards = True
+                # XXX Probably make this a helper
+                elif item.find("0x") != -1:
+                    if item.find("-") != -1 or item.find("+") != -1:
+                        p = self.parse_var(item)
+                    else:
+                        try:
+                            p = int(item, 16)
+                        except ValueError:
+                            p = self.parse_var(item)
+                elif item.find("$") != -1:
+                    p = self.parse_var(item)
+                elif item.find("-h") != -1:
+                    self.help()
+                    return
+            if maxbytes:
+                self.logmsg("Limiting to 0x%x bytes" % maxbytes)
+            addr = find_chunk_with_mh_magic(p, backwards=backwards, maxbytes=maxbytes)
+            if addr:
+                self.logmsg("Execute: ptchunk 0x%x" % addr)
+            else:
+                self.logmsg("Could not find a chunk within this window")
+
+        except Exception as e:
+            h.show_last_exception()
 
 ################################################################################
 class mpbinwalk(mpcmd):
@@ -364,7 +419,7 @@ class mpbinwalk(mpcmd):
         self.logmsg(' -l              list every result match/nomatch from -s')
         self.logmsg(' <sz>            size of chunk you want to dump the list for')
 
-    @has_inferior
+    @hgdb.has_inferior
     def invoke(self, arg, from_tty):
         try:
             verbose = 0
@@ -510,7 +565,7 @@ class mpbinwalk(mpcmd):
                 else:
                     self.logmsg(cur.info() + suffix)
         except Exception as e:
-            show_last_exception()
+            h.show_last_exception()
 
 ################################################################################
 class mpmstate(mpcmd):
@@ -523,7 +578,7 @@ class mpmstate(mpcmd):
         self.logmsg("usage: mpmstate <addr>")
         self.logmsg(" <addr> an mp_mstate structure address")
 
-    @has_inferior
+    @hgdb.has_inferior
     def invoke(self, arg, from_tty):
         try:
             if arg == '':
@@ -544,7 +599,7 @@ class mpmstate(mpcmd):
             mstate = lmp.mp_mstate(addr=p)
             print(mstate)
         except Exception as e:
-            show_last_exception()
+            h.show_last_exception()
 
 ###############################################################################
 class mphelp(mpcmd):
@@ -558,11 +613,12 @@ class mphelp(mpcmd):
         self.logmsg('mempool commands for gdb')
         if self.help_extra != None:
             self.logmsg(self.help_extra)
-        self.logmsg('mpheader -v -x <addr>           : show chunk contents (-v for verbose, -x for data dump)')
-        self.logmsg("mpbinwalk [-v] [-p <addr>] <sz> : walk an mpbin and operate on each chunk in a bin")
-        self.logmsg('mpbin <addr>                    : determine to which bin an mp_header is associated to')
-        self.logmsg('mpmstate <addr>                 : display and cache a mempool mstate address')
-        self.logmsg('mphelp                          : this help message')
+        self.logmsg('mpheader    : show chunk contents (-v for verbose, -x for data dump)')
+        self.logmsg("mpbinwalk   : walk an mpbin and operate on each chunk in a bin")
+        self.logmsg('mpbin       : determine to which bin an mp_header is associated to')
+        self.logmsg('mpmstate    : display and cache a mempool mstate address')
+        self.logmsg('mpfindchunk : scan the heap for a mempool header magic to find a chunk')
+        self.logmsg('mphelp      : this help message')
 
 if __name__ == "__main__":
     mphelp()
@@ -570,5 +626,6 @@ if __name__ == "__main__":
     mpheader()
     mpbin()
     mpmstate()
+    mpfindchunk()
 
     mpcmd.logmsg("loaded")

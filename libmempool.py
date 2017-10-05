@@ -93,6 +93,9 @@ def mpcallback(cbinfo):
         return parse_chunk(cbinfo)
     elif cbinfo["caller"] == "check_inuse":
         return chunk_has_inuse_magic(cbinfo)
+    else:
+        print("[libmempool] Unknown caller")
+        return None
 
 def chunk_has_inuse_magic(cbinfo):
     inferior = get_inferior()
