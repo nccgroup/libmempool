@@ -9,7 +9,10 @@ import re
 import sys
 import struct
 import traceback
-import gdb
+try:
+    import gdb
+except ImportError:
+    print("[libmempool] WARNING: No gdb environment found. Limited functionality available")
 
 global mp_mstate_cached
 mp_mstate_cached = None
