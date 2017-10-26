@@ -1026,7 +1026,10 @@ class mp_header(mp_helper):
 
     def retsync_rln(self, addr):
         global rln, ret_sync
-        
+
+        if not addr:
+            return "-"
+
         if ret_sync == RETSYNC_NONE:
             return "-"
         elif ret_sync == RETSYNC_JSON_PROTO:
