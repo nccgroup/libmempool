@@ -5,17 +5,98 @@
 # Copyright (c) 2017, Cedric Halbronn <cedric.halbronn(at)nccgroup(dot)trust>
 
 from __future__ import print_function
-import re
+import re, os
 import sys
 import struct
 import traceback
 try:
+    import configparser
+except ImportError:
+    import ConfigParser as configparser
+
+VERBOSE = 0
+
+HOST = "localhost"
+PORT = 9100
+
+RETSYNC_NONE = 0
+RETSYNC_GDB_COMMAND = 1
+RETSYNC_JSON_PROTO = 2
+global ret_sync
+ret_sync = RETSYNC_NONE
+global rln
+rln = None
+
+def logmsg(s, end=None):
+    if type(s) == str:
+        if end != None:
+            print("[libmempool] " + s, end=end)
+        else:
+            print("[libmempool] " + s)
+    else:
+        print(s)
+
+myself_path = sys.path[0]
+try:
     import gdb
 except ImportError:
-    print("[libmempool] WARNING: No gdb environment found. Limited functionality available")
-
+    logmsg("WARNING: No gdb environment found. Limited functionality available")
+    try:
+        sys.path.insert(0, os.path.join(myself_path, ".."))
+        import asa_sync
+    except ImportError:
+        logmsg("WARNING: No asa_sync available. Limited functionality available")
+    else:
+        try:
+            sys.path.insert(0, os.path.join(myself_path, "..", "ret-sync", "ext_python"))
+            import sync
+        except ImportError:
+            logmsg("WARNING: No ret-sync Python API available. Limited functionality available")
+        else:
+            logmsg("Using ret-sync over JSON")
+            ret_sync = RETSYNC_JSON_PROTO
+else:
+    ret_sync = RETSYNC_GDB_COMMAND
+    logmsg("Using ret-sync over GDB commands")
+    
 global mp_mstate_cached
 mp_mstate_cached = None
+
+def init_sync(bin_name):
+    global ret_sync, rln
+    global HOST, PORT
+
+    if ret_sync != RETSYNC_JSON_PROTO:
+        logmsg("WARNING: ret-sync with json disabled")
+        return
+
+    locations = [os.path.join(os.path.realpath(os.path.dirname(__file__)), ".sync"),
+                 os.path.join(os.environ['HOME'], ".sync")]
+
+    for confpath in locations:
+        if os.path.exists(confpath):
+            config = configparser.SafeConfigParser({'host': HOST, 'port': PORT})
+            config.read(confpath)
+            HOST = config.get("INTERFACE", 'host')
+            PORT = config.getint("INTERFACE", 'port')
+            print("[sync] configuration file loaded %s:%s" % (HOST, PORT))
+            break
+
+    ##### Cisco ASA specific
+    logmsg("firmware name: %s" % bin_name)
+
+    try:
+        mappings = asa_sync.global_mappings[bin_name]
+        mappings = asa_sync.patch_mapping(mappings, bin_name)
+    except KeyError:
+        logmsg("ERROR: no mapping defined for %s" % bin_name)
+        return
+    logmsg("mappings: %s" % (mappings))
+
+    s = sync.Sync(HOST, maps=mappings)
+    # add a bit more so we are in the .text section :)
+    s.invoke(offset=mappings[0][0]+0x8000)
+    rln = sync.Rln(s)
 
 # We have encountered two versions so far for the mempool header
 MEMPOOL_VERSION_1 = 1   # e.g. used in asa803-k8.bin
@@ -192,25 +273,25 @@ def parse_chunk(cbinfo):
 
     if cbinfo["addr"] != None:
         if "mem" in cbinfo:
-            mh = mp_header(size_sz=cbinfo["size_sz"], mem=cbinfo["mem"], addr=cbinfo["addr"], 
-                    allocator=cbinfo["allocator"], hdr_sz=cbinfo["hdr_sz"], 
-                    min_hdr_sz=cbinfo["min_hdr_sz"], chunksz=cbinfo["chunksz"], 
+            mh = mp_header(size_sz=cbinfo["size_sz"], mem=cbinfo["mem"], addr=cbinfo["addr"],
+                    allocator=cbinfo["allocator"], hdr_sz=cbinfo["hdr_sz"],
+                    min_hdr_sz=cbinfo["min_hdr_sz"], chunksz=cbinfo["chunksz"],
                     inuse=inuse)
         else:
-            mh = mp_header(size_sz=cbinfo["size_sz"], addr=cbinfo["addr"], allocator=cbinfo["allocator"], 
-                    hdr_sz=cbinfo["hdr_sz"], min_hdr_sz=cbinfo["min_hdr_sz"], 
+            mh = mp_header(size_sz=cbinfo["size_sz"], addr=cbinfo["addr"], allocator=cbinfo["allocator"],
+                    hdr_sz=cbinfo["hdr_sz"], min_hdr_sz=cbinfo["min_hdr_sz"],
                     chunksz=cbinfo["chunksz"], inuse=inuse)
         #print("[libmempool] mp_header size = 0x%x" % mh.mp_hdr_sz)
         if mh.mp_hdr_sz != 0 and chunk_info:
             if inuse == 1:
-                return "alloc_pc:{0:#010x},{1:s}".format(mh.alloc_pc, 
+                return "alloc_pc:{0:#010x},{1:s}".format(mh.alloc_pc,
                         mh.retsync_rln(mh.alloc_pc))
             else:
                 if current_mempool_version == MEMPOOL_VERSION_2:
-                    return " free_pc:{0:#010x},{1:s}".format(mh.free_pc, 
+                    return " free_pc:{0:#010x},{1:s}".format(mh.free_pc,
                             mh.retsync_rln(mh.free_pc))
                 else:
-                    return "alloc_pc(before free):{0:#010x},{1:s}".format(mh.alloc_pc, 
+                    return "alloc_pc(before free):{0:#010x},{1:s}".format(mh.alloc_pc,
                             mh.retsync_rln(mh.alloc_pc))
 
         if mh.mp_hdr_sz != 0 and not no_print:
@@ -262,9 +343,9 @@ class mp_structure(object):
         """
         bin_size Is it a valid register ?
         """
-        x86_reg = ['eax', 'ebx', 'ecx', 'edx', 'esi', 
+        x86_reg = ['eax', 'ebx', 'ecx', 'edx', 'esi',
                    'edi', 'esp', 'ebp', 'eip']
-        x64_reg = ['rax', 'rbx', 'rcx', 'rdx', 'rsi', 
+        x64_reg = ['rax', 'rbx', 'rcx', 'rdx', 'rsi',
                    'rdi', 'rsp', 'rbp', 'rip'] \
                    + ['r%d' % i for i in range(8, 16)]
 
@@ -344,7 +425,7 @@ class mp_helper(mp_structure):
 
 
     def retrieve_sizesz(self):
-        """Retrieve the SIZE_SZ after binary loading finished, this allows 
+        """Retrieve the SIZE_SZ after binary loading finished, this allows
            import within .gdbinit"""
 
         _machine = self.get_arch()
@@ -461,11 +542,11 @@ class mp_mstate(mp_helper):
         count = 0
         while count < self.nbins:
             bin_offset = self.bins_off + (count * self.MH_INUSE_SZ)
-            # we only store the address of the mp_header() as it is the only 
+            # we only store the address of the mp_header() as it is the only
             # one remaining unchanged
             self.inuse_bins.append(self.address + bin_offset)
             count += 1
-        self.counters = struct.unpack_from("<%dI" % self.nbins, mem, 
+        self.counters = struct.unpack_from("<%dI" % self.nbins, mem,
                 self.counter_offset)
 
         mp_mstate_cached = self
@@ -510,13 +591,13 @@ class mp_mstate(mp_helper):
 
     def __str__(self):
         string = []
-        string.append("%s%lx%s" % ("struct " + self.str_name + " @ 0x", 
+        string.append("%s%lx%s" % ("struct " + self.str_name + " @ 0x",
                     self.address, " {\n"))
         count = 0
         # calculation for small chunks (<0x1f) is (len >> 3) << 5
         # so (len/8) * 0x20
         for bin_i_addr in self.inuse_bins:
-            # We fake the fact that it is an allocated chunk though there is 
+            # We fake the fact that it is an allocated chunk though there is
             # only a mp_header() here so it successfully creates this object
             INUSE_HDR_SZ = 2 * self.SIZE_SZ
             CHUNK_SZ = INUSE_HDR_SZ + 2 * self.SIZE_SZ
@@ -570,13 +651,13 @@ class mp_header(mp_helper):
     # chunksz       = chunk size indicated in the allocator header
     # check         = indicates if we should check mp_header values and display
     #                 more info
-    # binhead       = special case for a mempool bin head as most fields are 
+    # binhead       = special case for a mempool bin head as most fields are
     #                 NULL except mh_fd_link
     def __init__(self, size_sz=0, addr=None, mem=None, size=None, inuse=None,
             allocator="dlmalloc", hdr_sz=None, min_hdr_sz=None, chunksz=None,
             check=True, binhead=False, binelement=False, mh_version=None):
         super(mp_header, self).__init__(size_sz=size_sz)
-        
+
         global current_mempool_version
 
         self.mh_magic         = 0
@@ -587,10 +668,10 @@ class mp_header(mp_helper):
         self.mh_fd_link       = None
         self.alloc_pc         = None
         self.free_pc          = None    # v2 only
-        
+
         self.mh_unused1          = None # v1 only
         self.mh_unused2          = None # v1 only
-        
+
         self.str_name         = "mp_header"
         self.tiny_name        = "mp_tiny_free_header"
         self.inferior         = None
@@ -600,7 +681,7 @@ class mp_header(mp_helper):
         if mem == None:
             self.check        = check
         else:
-            # We don't check if we have mem= because we don't support 
+            # We don't check if we have mem= because we don't support
             # address lookups inside mem
             self.check        = False
 
@@ -613,7 +694,7 @@ class mp_header(mp_helper):
 
         self.mp_hdr_sz        = 0
         self.mh_version       = mh_version
-        
+
         if self.mh_version == None:
             #print("[libmempool] [!] Version not specified, defaulting to version: %d" % current_mempool_version)
             self.mh_version = current_mempool_version
@@ -727,7 +808,7 @@ class mp_header(mp_helper):
             self.parse_v1(mem)
         else:
             self.parse_v2(mem)
-        
+
     def parse_v1(self, mem):
         if self.inuse == True:
             self.mp_hdr_sz = self.MH_INUSE_SZ
@@ -930,7 +1011,7 @@ class mp_header(mp_helper):
         return "mp_header @ 0x%.08x - mh_len: 0x%.08x, alloc_pc: 0x%.08x" % (addr, self.mh_len, self.alloc_pc)
 
     def check_mh_header_magic(self, addr):
-        # XXX - This should call into libmempool_gdb 
+        # XXX - This should call into libmempool_gdb
         try:
             import gdb
             mem = self.inferior.read_memory(addr, 0x4)
@@ -944,6 +1025,23 @@ class mp_header(mp_helper):
         return "-"
 
     def retsync_rln(self, addr):
+        global rln, ret_sync
+        
+        if ret_sync == RETSYNC_NONE:
+            return "-"
+        elif ret_sync == RETSYNC_JSON_PROTO:
+            if not rln:
+                logmsg("WARNING: you need to call libmempool.init_sync() first to use ret-sync")
+                ret_sync = False
+                return "-"
+            return rln.invoke(addr)
+        elif ret_sync == RETSYNC_GDB_COMMAND:
+            return self.retsync_rln_gdb(addr)
+        else:
+            return "-"
+
+    # old way of retrieving a symbol
+    def retsync_rln_gdb(self, addr):
         # XXX - Prefer not to use a global
         if addr == 0x0:
             return "-"
@@ -1007,7 +1105,7 @@ class mp_header(mp_helper):
             ret += "{:#x}".format(self.mh_unused1)
             ret += "\n{:13} = ".format("mh_unused2")
             ret += "{:#x}".format(self.mh_unused2)
-            
+
             return ret
         elif self.free_struct == True:
             ret = "struct mp_header @ "
@@ -1035,7 +1133,7 @@ class mp_header(mp_helper):
             ret += "{:#x}".format(self.mh_unused1)
             ret += "\n{:13} = ".format("mh_unused2")
             ret += "{:#x}".format(self.mh_unused2)
-            
+
             return ret
         elif self.tiny_free_struct == True:
             ret = "struct mp_header @ "
