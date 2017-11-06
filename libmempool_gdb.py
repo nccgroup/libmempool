@@ -395,7 +395,7 @@ class mpfindchunk(mpcmd):
                 self.logmsg("Limiting to 0x%x bytes" % maxbytes)
             addr = find_chunk_with_mh_magic(p, backwards=backwards, maxbytes=maxbytes)
             if addr:
-                self.logmsg("Execute: ptchunk 0x%x" % addr)
+                self.logmsg("Execute: ptchunk 0x%x or dlchunk 0x%x" % (addr, addr))
             else:
                 self.logmsg("Could not find a chunk within this window")
 
@@ -531,7 +531,7 @@ class mpbinwalk(mpcmd):
                     if search_val == None:
                         self.logmsg(head.info())
                 else:
-                    self.logmsg(head.info() + " [BIN HEAD]")
+                    print("[000] " + head.info() + " [BIN HEAD]")
             cur = head
             if count == 0:
                 count = 0x7fffffff
@@ -543,7 +543,10 @@ class mpbinwalk(mpcmd):
             show_head = False
             if cur.mh_len != 0:
                 show_head = True
+            i = 0
             while cur.mh_fd_link != 0 and count != 0:
+                i += 1
+                prefix = "[%03d] " % i
                 count -= 1
                 suffix = ""
                 if not show_head:
@@ -561,9 +564,9 @@ class mpbinwalk(mpcmd):
                         if list_all_chunks:
                             suffix = " [MATCH]"
                 if verbose:
-                    self.logmsg(cur)
+                    print(cur)
                 else:
-                    self.logmsg(cur.info() + suffix)
+                    print(prefix + cur.info() + suffix)
         except Exception as e:
             h.show_last_exception()
 

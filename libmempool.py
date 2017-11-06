@@ -26,6 +26,10 @@ global ret_sync
 ret_sync = RETSYNC_NONE
 global rln
 rln = None
+# We only use a symbols cache for RETSYNC_JSON_PROTO as it is meant to be
+# used offline where things do not change over time
+global symbols_cache
+symbols_cache = {}
 
 def logmsg(s, end=None):
     if type(s) == str:
@@ -97,6 +101,7 @@ def init_sync(bin_name):
     # add a bit more so we are in the .text section :)
     s.invoke(offset=mappings[0][0]+0x8000)
     rln = sync.Rln(s)
+    ##### end of Cisco ASA specific
 
 # We have encountered two versions so far for the mempool header
 MEMPOOL_VERSION_1 = 1   # e.g. used in asa803-k8.bin
@@ -1002,13 +1007,14 @@ class mp_header(mp_helper):
                     return
 
     # XXX - fix me
-    # XXX - Might be nice to show index in the mpbin list
     def info(self):
         if self.address == None:
             addr = 0x0
         else:
             addr = self.address
-        return "mp_header @ 0x%.08x - mh_len: 0x%.08x, alloc_pc: 0x%.08x" % (addr, self.mh_len, self.alloc_pc)
+        # Note: mh_len is 4 bytes hence 8 hex digits but usually we are dealing
+        # with smaller sizes so it gives a better output
+        return "mh @ 0x%.08x - mh_len: 0x%.04x, alloc_pc: 0x%.08x,%s" % (addr, self.mh_len, self.alloc_pc, self.retsync_rln(self.alloc_pc))
 
     def check_mh_header_magic(self, addr):
         # XXX - This should call into libmempool_gdb
@@ -1025,7 +1031,7 @@ class mp_header(mp_helper):
         return "-"
 
     def retsync_rln(self, addr):
-        global rln, ret_sync
+        global rln, ret_sync, symbols_cache
 
         if not addr:
             return "-"
@@ -1037,7 +1043,13 @@ class mp_header(mp_helper):
                 logmsg("WARNING: you need to call libmempool.init_sync() first to use ret-sync")
                 ret_sync = False
                 return "-"
-            return rln.invoke(addr)
+            if addr in symbols_cache.keys():
+                return symbols_cache[addr]
+            else:
+            if True:
+                sym = rln.invoke(addr)
+                symbols_cache[addr] = sym
+                return sym
         elif ret_sync == RETSYNC_GDB_COMMAND:
             return self.retsync_rln_gdb(addr)
         else:
