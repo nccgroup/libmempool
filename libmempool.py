@@ -1046,7 +1046,6 @@ class mp_header(mp_helper):
             if addr in symbols_cache.keys():
                 return symbols_cache[addr]
             else:
-            if True:
                 sym = rln.invoke(addr)
                 symbols_cache[addr] = sym
                 return sym

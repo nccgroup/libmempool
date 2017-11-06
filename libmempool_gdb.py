@@ -323,7 +323,7 @@ def find_chunk_with_mh_magic(p, backwards=False, maxbytes=None):
         dw = struct.unpack_from("<I", mem, 0x0)[0]
         #log.logmsg("0x%x -> 0x%x" % (addr, dw))
         if dw == 0xa11c0123:
-            log.logmsg("Found mempool header magic at 0x%x" % (addr & 0xffffff))
+            log.logmsg("Found mempool header magic at offset 0x%x" % (addr & 0xffffff))
             # we were at mh start, we want to go at ptmalloc/dlmalloc chunk start
             if hgdb.retrieve_sizesz() == 4:
                 addr -= 0x8
@@ -332,7 +332,7 @@ def find_chunk_with_mh_magic(p, backwards=False, maxbytes=None):
             break
         # XXX - test this
         #if dw == 0x5ee33210:
-        #    log.logmsg("Found mempool temp free header magic at 0x%x" % (addr & 0xffffff))
+        #    log.logmsg("Found mempool temp free header magic at offset 0x%x" % (addr & 0xffffff))
         #    # we were at mh start, we want to go at ptmalloc/dlmalloc chunk start
         #    if hgdb.retrieve_sizesz() == 4:
         #        addr -= 0x8
