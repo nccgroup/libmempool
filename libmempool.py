@@ -264,6 +264,10 @@ def parse_chunk(cbinfo):
         print("[libmempool] Missing inuse")
         return 0
 
+    inuse_override = None
+    if "inuse_override" in cbinfo:
+        inuse_override = cbinfo["inuse_override"]
+
     # This is currently needed if we want the hdr size and not to print
     if "no_print" in cbinfo:
         no_print = cbinfo["no_print"]
@@ -288,6 +292,9 @@ def parse_chunk(cbinfo):
                     chunksz=cbinfo["chunksz"], inuse=inuse)
         #print("[libmempool] mp_header size = 0x%x" % mh.mp_hdr_sz)
         if mh.mp_hdr_sz != 0 and chunk_info:
+            if inuse_override != None and inuse_override == False:
+                inuse = 0
+
             if inuse == 1:
                 return "alloc_pc:{0:#010x},{1:s}".format(mh.alloc_pc,
                         mh.retsync_rln(mh.alloc_pc))
