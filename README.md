@@ -1,6 +1,10 @@
 # libmempool
 
-**libmempool** is a python script and GDB analyss tool to aid in the analysis
+Preliminary note: we recommend you to use this as part of 
+[asatools](https://github.com/nccgroup/asatools) but it can also be used 
+standalone.
+
+**libmempool** is a python script and GDB analysis tool to aid in the analysis
 of mempool-related data structuress found inside various heaps on Cisco ASA
 devices. Normally this information is embedded into a heap chunk, or is a
 custom extension to some other common heap structure such as a dlmalloc

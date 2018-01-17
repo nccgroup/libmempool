@@ -204,8 +204,10 @@ class mpbin(mpcmd):
                     # Just get an object reference. Won't be initialized
                     mstate = lmp.mp_mstate(addr=None)
                     mstate_addr = mstate.compute_base_addr(bin_i_addr, orig_m.mh_len)
-                    if lmp.mp_mstate_cached == None or \
-                            lmp.mp_mstate_cached.address != mstate_addr:
+                    # XXX - above fails on 64-bit asa924-smp real device
+                    #if lmp.mp_mstate_cached == None or \
+                    #        lmp.mp_mstate_cached.address != mstate_addr:
+                    if lmp.mp_mstate_cached == None:
                         lmp.mp_mstate(addr=mstate_addr)
                         self.logmsg("Cached new mp_mstate @ 0x%x" % mstate_addr)
                     break
@@ -216,7 +218,7 @@ class mpbin(mpcmd):
                         self.logmsg("Invalid lmp.mp_header at 0x%x" % p)
                         return
                 else:
-                    self.logmsg("ERROR: Chunk has no mh_bk_link")
+                    self.logmsg("ERROR: Chunk has no valid mh_bk_link")
                     return
 
             if lmp.mp_mstate_cached == None:
@@ -410,7 +412,7 @@ class mpbinwalk(mpcmd):
     def help(self):
         self.logmsg('usage: mpbinwalk [-v] [-p <addr>] <sz>')
         self.logmsg(' -p <addr>       address of the mp_mstate')
-        self.logmsg(' -P <addr>       address of a lmp.mp_header to start walking instead of using the bin head')
+        self.logmsg(' -P <addr>       address of a mp_header to start walking instead of using the bin head')
         self.logmsg(' -s <0x01234567> search for 4-byte value in chunk')
         self.logmsg(' --depth <num>   how deep to search inside the chunk')
         self.logmsg(' -o <offset>     search for -s pattern at offset')
