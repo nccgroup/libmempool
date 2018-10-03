@@ -9,6 +9,7 @@ import re, os
 import sys
 import struct
 import traceback
+import pickle
 try:
     import configparser
 except ImportError:
@@ -30,6 +31,8 @@ rln = None
 # used offline where things do not change over time
 global symbols_cache
 symbols_cache = {}
+global symbols_cache_file
+symbols_cache_file = None
 
 def logmsg(s, end=None):
     if type(s) == str:
@@ -103,6 +106,11 @@ def init_sync(bin_name):
     rln = sync.Rln(s)
     ##### end of Cisco ASA specific
 
+    global symbols_cache, symbols_cache_file
+    symbols_cache_file = bin_name + ".symcached"
+    if os.path.isfile(symbols_cache_file):
+        logmsg("Loading cached symbols from %s" % symbols_cache_file)
+        symbols_cache = pickle.load(open(symbols_cache_file, "rb"))
 # We have encountered two versions so far for the mempool header
 MEMPOOL_VERSION_1 = 1   # e.g. used in asa803-k8.bin
 MEMPOOL_VERSION_2 = 2   # most used
@@ -1038,7 +1046,7 @@ class mp_header(mp_helper):
         return "-"
 
     def retsync_rln(self, addr):
-        global rln, ret_sync, symbols_cache
+        global rln, ret_sync, symbols_cache, symbols_cache_file
 
         if not addr:
             return "-"
@@ -1055,6 +1063,8 @@ class mp_header(mp_helper):
             else:
                 sym = rln.invoke(addr)
                 symbols_cache[addr] = sym
+                if symbols_cache_file != None:
+                    pickle.dump(symbols_cache, open(symbols_cache_file, "wb"))
                 return sym
         elif ret_sync == RETSYNC_GDB_COMMAND:
             return self.retsync_rln_gdb(addr)
