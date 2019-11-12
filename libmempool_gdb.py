@@ -42,6 +42,7 @@ class mpcmd(gdb.Command):
         self.p_long = gdb.lookup_type('long').pointer()
         self.is_x86 = self.p_long.sizeof == 4
         self.mh_version = mh_version
+        self.SIZE_SZ = hgdb.retrieve_sizesz()
         super(mpcmd, self).__init__(name, gdb.COMMAND_DATA, gdb.COMPLETE_NONE)
 
     def logmsg(self, s, end=None):
@@ -55,9 +56,9 @@ class mpcmd(gdb.Command):
 
     def parse_var(self, var):
         if self.SIZE_SZ == 4:
-            p = self.tohex(long(gdb.parse_and_eval(var)), 32)
+            p = self.tohex(int(gdb.parse_and_eval(var)), 32)
         elif self.SIZE_SZ == 8:
-            p = self.tohex(long(gdb.parse_and_eval(var)), 64)
+            p = self.tohex(int(gdb.parse_and_eval(var)), 64)
         return int(p, 16)
 
     # Because python is incapable of turning a negative integer into a hex
@@ -353,7 +354,7 @@ class mpfindchunk(mpcmd):
         super(mpfindchunk, self).__init__("mpfindchunk", mh_version=mh_version)
 
     def help(self):
-        self.logmsg('usage: mpfindchunk [<addr> [-r] [-b]')
+        self.logmsg('usage: mpfindchunk [<addr> [-b] [-m]')
         self.logmsg(' <addr> address to start from')
         self.logmsg(' -b      go backwards (default: forwards)')
         self.logmsg(' -m      max bytes to search for (otherwise search indefinitely)')
@@ -552,7 +553,11 @@ class mpbinwalk(mpcmd):
                 count -= 1
                 suffix = ""
                 if not show_head:
-                    cur = lmp.mp_header(addr=cur.mh_fd_link, binelement=True, mh_version=self.mh_version)
+                    tmp = lmp.mp_header(addr=cur.mh_fd_link, binelement=True, mh_version=self.mh_version)
+                    if not tmp.initOK:
+                        self.logmsg("ERROR: Invalid mp_header found at 0x%x" % cur.mh_fd_link)
+                        break
+                    cur = tmp
                 else:
                     show_head = False
                 if search_val != None:

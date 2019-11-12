@@ -803,17 +803,20 @@ class mp_header(mp_helper):
                 mem = self.inferior.read_memory(self.address, self.MH_INUSE_SZ)
             except TypeError:
                 print("Invalid address specified.")
-                return None
+                self.initOK = False
+                return
             except RuntimeError:
                 print("Could not read address {0:#x}".format(self.address))
-                return None
+                self.initOK = False
+                return
         else:
             # a string of raw memory was provided
             mlen = len(mem)
             if inuse:
                 if (mlen != self.MH_INUSE_SZ) and (mlen < self.MH_INUSE_SZ):
                     print("Insufficient memory (%d bytes) provided for an mp header. Need at least %d bytes" % (mlen, self.MH_INUSE_SZ))
-                    return None
+                    self.initOK = False
+                    return
             # XXX - This is weird because if we look at the actual address returned
             # by malloc to analyze the mp header then we can rely on
             # MH_INUSE_SZ, but if they specify the _real_ start address
@@ -822,7 +825,8 @@ class mp_header(mp_helper):
             else:
                 if (mlen != self.MH_FREE_SZ) and (mlen < self.MH_FREE_SZ):
                     print("Insufficient memory provided for a free mp header.")
-                    return None
+                    self.initOK = False
+                    return
 
         if self.mh_version == MEMPOOL_VERSION_1:
             self.parse_v1(mem)
@@ -915,6 +919,7 @@ class mp_header(mp_helper):
                     self.mp_hdr_sz = 0
                     self.initOK = False
                     return
+        self.initOK = True
 
     def parse_v2(self, mem):
         if self.inuse == True:
@@ -1020,6 +1025,7 @@ class mp_header(mp_helper):
                     self.mp_hdr_sz = 0
                     self.initOK = False
                     return
+        self.initOK = True
 
     # XXX - fix me
     def info(self):
